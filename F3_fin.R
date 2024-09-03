@@ -1,0 +1,250 @@
+rm(list=ls())
+
+library(readr)
+library(dplyr)
+library(zoo)
+library(ggplot2)
+library(openxlsx)
+library(readxl)
+library(cowplot)
+library(patchwork)
+library(reshape2)
+
+
+library(themeustat)
+palustat <- themeustat::pal_ustat
+
+
+## fare il grafico coi dati IFC: sicurezza del posto di lavoro vs crescita tx diso (iin p.p.)
+# dal 1991
+
+
+###############################
+
+# 3.1 Sécurité de l’emploi
+
+######################################
+
+# Question : Selon vous, comment la sécurité de l’emploi a-t-elle évolué au cours des 12 der-niers mois ? 
+# Elle… Réponses : est nettement plus sûre (+2) /
+# est un peu plus sûre (+1) / est restée à peu près inchangée (0) /
+# est un peu plus incertaine (−1) / est nettement plus incertaine (−2)
+
+
+
+# Carico i dati
+
+# d1: dati diso ILO
+
+t0 <- 2010
+ultimo_mese <- 6
+
+d1_ <- read_excel("dati/je-f-03.03.01.03.xlsx", 
+                  sheet = "Trimestriel (2010-2024)", skip = 2,
+                  n_max = 1)
+
+d1 <- t(d1_)
+
+k <- nrow(d1)
+d1 <- as.data.frame(d1[2:k, ])
+
+rownames(d1) <- 1:nrow(d1)
+colnames(d1) <- "value"
+
+d1$value <- as.double(d1$value)
+d1$stat <- "disoILO"
+
+# d1 <- d1 %>%
+#   mutate(tmp = lag(value, n = 4L),
+#          value = value - tmp)
+
+d1 <- d1 %>%
+  mutate(m12 = rollmean(value, k = 4, fill = NA, align = "right"),
+         d12 = m12 - lag(m12, n = 1L),
+         cat = if_else(m12 >= 4.875, "1",
+                       if_else(value < 4.2, "2", "0")),
+         cat2 = if_else(d12 > .15, "1",
+                        if_else(d12 < -.15, "2", "0")))
+
+tmp <- seq(as.yearmon(t0), as.yearmon(2024 + (ultimo_mese - 1)/12), 3/12)
+d1$data <- tmp
+
+d1 <- d1 %>%
+  mutate(
+    mese = format(data, "%m"),
+    anno = format(data, "%y")) %>%
+  select(data, mese, anno, stat, cat, cat2, value, m12, d12) %>%
+  melt(id.vars = c("data", "mese", "anno", "stat"), variable.name = "var")
+
+
+d1$value <- as.double(d1$value)
+
+# d2: dati della Seco, serie lunga (trimestrale)
+
+url <- "https://www.seco.admin.ch/dam/seco/fr/dokumente/Wirtschaft/Wirtschaftslage/Konsumentenstimmung/ks_q.csv.download.csv/ks_q.csv"
+d2_ <- read_csv(url)
+
+d2 <- d2_ %>%
+  filter(structure %in% c("ks_i32_unemp_exp_q", "ks_i31_job_secure_q"),
+         type == "index",
+         seas_adj == "csa") %>%
+  mutate(data = as.yearmon(date),
+         mese = format(data, "%m"),
+         anno = format(data, "%y"),
+         stat = "icc") %>%
+  select(data, mese, anno, structure, stat, value)
+
+
+tmp1 <- d2 %>%
+  filter(structure == "ks_i31_job_secure_q") %>%
+  mutate(value = -value)
+
+tmp2 <- d2 %>%
+  filter(structure != "ks_i31_job_secure_q") 
+
+d2 <- rbind(tmp1, tmp2)
+
+
+
+## Figure
+
+col2 <- RColorBrewer::brewer.pal(8, "Set2")
+col2 <- c(pal_ustat[3:9], col2[8])
+
+# temp <- c(2005 + 3/12, 2010 + 3/12, 2016 + 3/12, 2021 + 3/12)
+temp <- c(2016 + 3/12, 2019, 2021, 2023)
+temp <- as.yearmon(temp)
+
+a <- d1 %>%
+  filter(data %in%  temp, var == "m12") %>%
+  select(value) %>%
+  as.vector()
+
+a <- as.double(t(a))
+
+
+p1 <- d1 %>%
+  filter(data >= 2015,
+         var %in% c("m12", "value")) %>%
+  ggplot(aes(x = data, y = value, group = var, colour = var)) +
+  geom_rect(aes(xmin = temp[1] - 1/12, xmax = temp[1] + 1/12, ymin = -Inf, ymax = a[1]),
+            fill = col2[8], alpha = 0.05, colour = col2[8]) +
+  geom_rect(aes(xmin = temp[3] - 1/12, xmax = temp[3] + 1/12, ymin = -Inf, ymax = a[3]),
+            fill = col2[8], alpha = 0.05, colour = col2[8]) +
+  geom_segment(aes(x = temp[1], xend = temp[1], y = -Inf, yend = a[1]),
+               linetype = "dotted", colour = "white", linewidth = .75) +
+  geom_segment(aes(x = temp[3], xend = temp[3], y = -Inf, yend = a[3]),
+               linetype = "dotted", colour = "white", linewidth = .75) +
+  geom_segment(aes(x = temp[2], xend = temp[2], y = -Inf, yend = a[2]),
+               linetype = "dotted", colour = pal_ustat[3], linewidth = .75) +
+  geom_segment(aes(x = temp[4], xend = temp[4], y = -Inf, yend = a[4]),
+               linetype = "dotted", colour = pal_ustat[3], linewidth = .75) +
+  geom_line(aes(linewidth = var)) +
+  scale_color_manual(values = c(pal_ustat[7], pal_ustat[2])) +
+  scale_linewidth_manual(values = c(.5, 1.5)) +
+  scale_y_continuous(breaks = c(3, 4, 5),
+                     labels = c("3.0%", "4.0%", "5.0%"),
+                     limits = c((3 - 5/6), (5 + 5/6))) +
+  labs(title = "Taux de chômage (ILO)",
+       subtitle = "Moyenne mobile (4 dernières trimestres, en %)\n   ",
+       caption = "Source: Statistique du chômage au sens du BIT, OFS, Neuchâtel",
+       x = "", y = "") +
+  theme_ustat() +
+  theme(
+    plot.title = element_text(face = "bold", size = 20),
+    plot.subtitle = element_text(color = col2[8], size = 18),
+    plot.caption = element_text(color = col2[8], size = 12),
+    axis.text = element_text(size = 12)
+  ) +
+  guides(colour = "none", linewidth = "none")
+  
+
+a2 <- d1 %>%
+  filter(data %in%  temp, var == "d12") %>%
+  select(value) %>%
+  as.vector()
+
+a2 <- as.double(t(a2))
+
+p1_ <- d1 %>%
+  filter(data >= 2015,
+         var %in% c("d12", "d12_")) %>%
+  ggplot(aes(x = data, y = value, group = var, colour = var)) +
+  geom_rect(aes(xmin = temp[1] - .25, xmax = temp[1] + .25, ymin = -Inf, ymax = a2[1]),
+            fill = "grey85", alpha = 0.05) +
+  geom_rect(aes(xmin = temp[3] - .25, xmax = temp[3] + .25, ymin = -Inf, ymax = a2[3]),
+            fill = "grey85", alpha = 0.05) +
+  geom_segment(aes(x = temp[1], xend = temp[1], y = -Inf, yend = a2[1]),
+               linetype = "dashed", colour = "white", linewidth = .75) +
+  geom_segment(aes(x = temp[3], xend = temp[3], y = -Inf, yend = a2[3]),
+               linetype = "dashed", colour = "white", linewidth = .75) +
+  geom_segment(aes(x = temp[2], xend = temp[2], y = -Inf, yend = a2[2]),
+               linetype = "dashed", colour = pal_ustat[3], linewidth = .75) +
+  geom_segment(aes(x = temp[4], xend = temp[4], y = -Inf, yend = a2[4]),
+               linetype = "dashed", colour = pal_ustat[3], linewidth = .75) +
+  geom_line(aes(linewidth = var)) +
+  scale_color_manual(values = c(pal_ustat[2], pal_ustat[7])) +
+  scale_linewidth_manual(values = c(1.5, .5)) +
+  scale_y_continuous(breaks = c(-.3, 0, .3),
+                     labels = c("-0.3 p.p.", "0.0 p.p.", "+0.3 p.p."),
+                     limits = c((-.3 - 5/6 * .3), (.3 + 5/6 * .3))) +
+  labs(title = "Taux de chômage (ILO)",
+       subtitle = "Delta moyenne mobile (q-to-q, en p.p.)",
+       caption = "Source: Statistique du chômage des inscripts aux ORC, SECO, Berne",
+       x = "", y = "") +
+  theme_ustat() +
+  theme(
+    plot.title = element_text(face = "bold", size = 20),
+    plot.subtitle = element_text(color = col2[8], size = 18),
+    plot.caption = element_text(color = col2[8], size = 12),
+    axis.text = element_text(size = 12)
+  ) +
+  guides(colour = "none")
+
+  
+
+b <- tmp1 %>%
+  filter(data %in% temp) %>%
+  select(value) %>%
+  as.vector()
+
+b <- as.double(t(b))
+
+p2 <- tmp1 %>%
+  filter(data >= 2015) %>%
+  ggplot(aes(x = data, y = value, group = structure)) +
+  geom_rect(aes(xmin = temp[1] - 1/12, xmax = temp[1] + 1/12, ymin = -Inf, ymax = b[1]),
+            fill = col2[8], alpha = 0.05, colour = col2[8]) +
+  geom_rect(aes(xmin = temp[3] - 1/12, xmax = temp[3] + 1/12, ymin = -Inf, ymax = b[3]),
+            fill = col2[8], alpha = 0.05, colour = col2[8]) +
+  geom_segment(aes(x = temp[1], xend = temp[1], y = -Inf, yend = b[1]),
+               linetype = "dotted", colour = "white", linewidth = .75) +
+  geom_segment(aes(x = temp[3], xend = temp[3], y = -Inf, yend = b[3]),
+               linetype = "dotted", colour = "white", linewidth = .75) +
+  geom_segment(aes(x = temp[2], xend = temp[2], y = -Inf, yend = b[2]),
+               linetype = "dotted", colour = pal_ustat[3], linewidth = .75) +
+  geom_segment(aes(x = temp[4], xend = temp[4], y = -Inf, yend = b[4]),
+               linetype = "dotted", colour = pal_ustat[3], linewidth = .75) +
+  geom_line(aes(colour = stat), linewidth = 1.5) +
+  scale_color_manual(values = pal_ustat[1]) +
+  scale_y_continuous(breaks = c(0, 60, 120), labels = c("0", "60", "120"),
+                     limits = c(-50, 170)) +
+  labs(title = "Sécurité de l'emploi",
+       subtitle = "Qu: comment la sécurité de l'emploi a-t-elle évolué\nau cours des 12 derniers mois",
+       caption = "Source: Job security situation, ICC, Seco, Berne (ks_i31_job_secure_q)",
+       x = "", y = "") +
+  theme_ustat() +
+  theme(
+    plot.title = element_text(face = "bold", size = 20),
+    plot.subtitle = element_text(color = col2[8], size = 18),
+    plot.caption = element_text(color = col2[8], size = 12),
+    axis.text = element_text(size = 12)
+    ) +
+  guides(colour = "none")
+
+
+g <- p2 + p1
+g2 <- p2 + p1_
+
+
+#

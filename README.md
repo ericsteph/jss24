@@ -1,6 +1,6 @@
 # Neuchatel... we have a problem
 
-...aarau 2024  
+JSS 2024 | Aarau
 
 https://ericsteph.github.io/jss24/  
 

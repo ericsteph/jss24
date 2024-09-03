@@ -1,0 +1,13 @@
+kableExtra
+magrittr
+webshot
+themeustat
+readr
+dplyr
+zoo
+ggplot2
+openxlsx
+readxl
+cowplot
+patchwork
+reshape2

@@ -2,4 +2,4 @@
 
 ...aarau 2024  
 
-https://github.com/ericsteph/jss24
+https://ericsteph.github.io/jss24
